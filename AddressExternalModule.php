@@ -28,141 +28,215 @@ class AddressExternalModule extends AbstractExternalModule
 		$import = $this->getProjectSetting('import-google-api',$project_id);
 
 		if ($key && $autocomplete) {
-			# configure the form; disable fields; set IDs
+
+			// FIX #3: Load Google Maps API asynchronously with loading=async
+			if ($import) {
+				echo '<script async src="https://maps.googleapis.com/maps/api/js?key='
+					. htmlspecialchars($key, ENT_QUOTES, 'UTF-8')
+					. '&libraries=places&loading=async"></script>';
+			}
 
 			?>
-				<script>
-					var autocompletePrefix = 'googleSearch_';
-					var autocompleteId = autocompletePrefix+'autocomplete';
+			<style>
+				#locationField { position: relative; }
+				#locationField gmp-place-autocomplete {
+					width: 100%;
+					font-size: 13px;
+				}
+			</style>
 
-					$(document).ready(function() {
-						<?php $numFields = 0; ?>
-						<?php if ($streetNumber): ?>
-							$('[name="<?php echo $streetNumber; ?>"]').attr('id', autocompletePrefix+'street_number');
-							$('[name="<?php echo $streetNumber; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($street): ?>
-							$('[name="<?php echo $street; ?>"]').attr('id', autocompletePrefix+'route');
-							$('[name="<?php echo $street; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($city): ?>
-							$('[name="<?php echo $city; ?>"]').attr('id', autocompletePrefix+'locality');
-							$('[name="<?php echo $city; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($county): ?>
-							$('[name="<?php echo $county; ?>"]').attr('id', autocompletePrefix+'administrative_area_level_2');
-							$('[name="<?php echo $county; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($state): ?>
-							$('[name="<?php echo $state; ?>"]').attr('id', autocompletePrefix+'administrative_area_level_1');
-							$('[name="<?php echo $state; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($zip): ?>
-							$('[name="<?php echo $zip; ?>"]').attr('id', autocompletePrefix+'postal_code');
-							$('[name="<?php echo $zip; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($country): ?>
-							$('[name="<?php echo $country; ?>"]').attr('id', autocompletePrefix+'country');
-							$('[name="<?php echo $country; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($latitude): ?>
-							$('[name="<?php echo $latitude; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($longitude): ?>
-							$('[name="<?php echo $longitude; ?>"]').prop('disabled', true);
-							<?php $numFields++; ?>
-						<?php endif; ?>
-						<?php if ($numFields > 0): ?>
-							$('[name="<?php echo $autocomplete; ?>"]').attr('id', autocompleteId);
-							$('[name="<?php echo $autocomplete; ?>"]').wrap('<div id="locationField"></div>');
-							$('[name="<?php echo $autocomplete; ?>"]').attr('placeholder', 'Enter your address here');
-							$('[name="<?php echo $autocomplete; ?>"]').on('keydown', function() { geolocate(); });
-							$('[name="<?php echo $autocomplete; ?>"]').focus(function() { geolocate(); });
-						<?php endif; ?>
-						initAutocomplete();
-					});
-				</script>
+			<script>
+			(function() {
+				var autocompletePrefix = 'googleSearch_';
+				var autocompleteFieldName = <?php echo json_encode($autocomplete); ?>;
 
-				<!-- Google code configured to this system -->
-				<script>
-					var placeSearch, autocomplete;
-					var componentForm = {
-						// Lets check and see which fields we need
-						<?php echo ($streetNumber ? "street_number: 'short_name'," : "" ); ?>
-						<?php echo ($street ? "route: 'long_name'," : "" ); ?>
-						<?php echo ($city ? "locality: 'long_name'," : "" ); ?>
-						<?php echo ($county ? "administrative_area_level_2: 'short_name'," : "" ); ?>
-						<?php echo ($state ? "administrative_area_level_1: 'short_name'," : "" ); ?>
-						<?php echo ($country ? "country: 'long_name'," : "" ); ?>
-						<?php echo ($zip ? "postal_code: 'short_name'," : "" ); ?>
-					};
+				// Component mapping: Google address type -> format preference
+				var componentForm = {
+					<?php echo ($streetNumber ? "street_number: 'short_name'," : ""); ?>
+					<?php echo ($street ? "route: 'long_name'," : ""); ?>
+					<?php echo ($city ? "locality: 'long_name'," : ""); ?>
+					<?php echo ($county ? "administrative_area_level_2: 'short_name'," : ""); ?>
+					<?php echo ($state ? "administrative_area_level_1: 'short_name'," : ""); ?>
+					<?php echo ($country ? "country: 'long_name'," : ""); ?>
+					<?php echo ($zip ? "postal_code: 'short_name'," : ""); ?>
+				};
 
-					function initAutocomplete() {
-						/* Create the autocomplete object, restricting the search to geographical location types. */
-						var defaultBounds = new google.maps.LatLngBounds(
-							new google.maps.LatLng(-90,-180),
-							new google.maps.LatLng(90,180)
-						);
-						autocomplete = new google.maps.places.Autocomplete(
-							(document.getElementById(autocompleteId)),
-							{types: ['address']}
-						);
-						/* When the user selects an address from the dropdown, populate the address fields in the form. */
-						autocomplete.addListener('place_changed', fillInAddress);
+				// Map legacy property names to the new Places API property names
+				var formatMap = {
+					'short_name': 'shortText',
+					'long_name': 'longText'
+				};
 
-						// if the user deletes the address, erase all address components
-						let addressField = document.getElementById(autocompleteId);
-						addressField.addEventListener('change', (event) => {
-								if (addressField.value === "") { fillInAddress(); }
-							})
+				$(document).ready(function() {
+					// FIX #1: Guard — only proceed if the autocomplete target field
+					// exists on this particular instrument / form page.
+					var $autocompleteField = $('[name="' + autocompleteFieldName + '"]');
+					if ($autocompleteField.length === 0) {
+						return; // Field not on this form; do nothing.
 					}
 
-					function updateValue(id, value){
-						if(id == 'latitude') {
-							var element = $('[name="<?php echo $latitude; ?>"]');
-						}
-						else if(id == 'longitude') {
-							var element = $('[name="<?php echo $longitude; ?>"]');
-						}
-						else {
-							var element = $('#' + id);
-						}
+					// Set up component destination fields: assign IDs and disable them
+					<?php if ($streetNumber): ?>
+						$('[name="<?php echo $streetNumber; ?>"]').attr('id', autocompletePrefix + 'street_number').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($street): ?>
+						$('[name="<?php echo $street; ?>"]').attr('id', autocompletePrefix + 'route').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($city): ?>
+						$('[name="<?php echo $city; ?>"]').attr('id', autocompletePrefix + 'locality').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($county): ?>
+						$('[name="<?php echo $county; ?>"]').attr('id', autocompletePrefix + 'administrative_area_level_2').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($state): ?>
+						$('[name="<?php echo $state; ?>"]').attr('id', autocompletePrefix + 'administrative_area_level_1').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($zip): ?>
+						$('[name="<?php echo $zip; ?>"]').attr('id', autocompletePrefix + 'postal_code').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($country): ?>
+						$('[name="<?php echo $country; ?>"]').attr('id', autocompletePrefix + 'country').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($latitude): ?>
+						$('[name="<?php echo $latitude; ?>"]').prop('disabled', true);
+					<?php endif; ?>
+					<?php if ($longitude): ?>
+						$('[name="<?php echo $longitude; ?>"]').prop('disabled', true);
+					<?php endif; ?>
 
-						if(element.length === 0){
-							console.log('Could not find the element with the following id:', id)
-							return
-						}
-						
-						var eleType = element.prop('type');
-						element.val(value);
+					// Wrap original field and hide it; the PlaceAutocompleteElement will replace it visually
+					$autocompleteField.wrap('<div id="locationField"></div>');
+					$autocompleteField.hide();
 
-						// Is this a unique field type?
-						var eleName = element.attr('name');
-						if(element.hasClass('hiddenradio')) { // Are we working with a radio field?
-							$('input[name="'+eleName+'___radio"][value="'+value+'"]').prop('checked', true);
-						} else if(eleType.indexOf("select") >= 0) { // Is it a select field?
-							if($('#'+id+' option[value="'+value+'"]').length > 0) { // Is our value an option in the select?
-								$('#'+id+' option[value="'+value+'"]').prop('selected', true);
-							} else if($('#'+id+' option[value="'+valUnderscore+'"]').length > 0) { // Lets try again with underscores
-								var valUnderscore = value.replace(/\s+/g,"_");
-								console.log(valUnderscore);
+					// Initialize the autocomplete once the Google Maps API is available
+					initAutocomplete($autocompleteField);
+				});
+
+				/**
+				 * Polls until the Google Maps core object is available (handles async loading).
+				 */
+				function waitForGoogleMaps() {
+					return new Promise(function(resolve) {
+						if (typeof google !== 'undefined' && google.maps) {
+							resolve();
+							return;
+						}
+						var poll = setInterval(function() {
+							if (typeof google !== 'undefined' && google.maps) {
+								clearInterval(poll);
+								resolve();
+							}
+						}, 100);
+					});
+				}
+
+				/**
+				 * FIX #2: Use the modern PlaceAutocompleteElement instead of the
+				 * deprecated google.maps.places.Autocomplete class.
+				 * FIX #3: Handles the asynchronous load via waitForGoogleMaps().
+				 */
+				function initAutocomplete($field) {
+					waitForGoogleMaps()
+						.then(function() {
+							return google.maps.importLibrary('places');
+						})
+						.then(function(placesLib) {
+							var PlaceAutocompleteElement = placesLib.PlaceAutocompleteElement;
+
+							// Create the new web-component-based autocomplete element
+							var placeAutocomplete = new PlaceAutocompleteElement({
+								types: ['address']
+							});
+							placeAutocomplete.id = autocompletePrefix + 'autocomplete';
+							placeAutocomplete.setAttribute('placeholder', 'Enter your address here');
+
+							// Insert the new element into the wrapper, before the hidden original field
+							$field.before(placeAutocomplete);
+
+							// Apply geolocation bias to improve relevance
+							applyGeolocationBias(placeAutocomplete);
+
+							// Listen for place selection (new API event)
+							placeAutocomplete.addEventListener('gmp-placeselect', async function(event) {
+								var place = event.place;
+								if (place) {
+									try {
+										await place.fetchFields({
+											fields: ['addressComponents', 'location', 'formattedAddress']
+										});
+									} catch (e) {
+										console.warn('Address Autocomplete: could not fetch place fields.', e);
+										place = null;
+									}
+								}
+								fillInAddress(place, $field);
+							});
+						})
+						.catch(function(err) {
+							console.error('Address Autocomplete: failed to initialise.', err);
+						});
+				}
+
+				/**
+				 * Bias the autocomplete results toward the user's current location.
+				 */
+				function applyGeolocationBias(placeAutocomplete) {
+					if (navigator.geolocation) {
+						navigator.geolocation.getCurrentPosition(function(position) {
+							var circle = new google.maps.Circle({
+								center: {
+									lat: position.coords.latitude,
+									lng: position.coords.longitude
+								},
+								radius: position.coords.accuracy
+							});
+							placeAutocomplete.locationBias = circle.getBounds();
+						});
+					}
+				}
+
+				/**
+				 * Helper: update a REDCap field value, handling radios, selects,
+				 * and rc-autocomplete dropdowns.  (Preserved from v1.0.0.)
+				 */
+				function updateValue(id, value) {
+					if (id == 'latitude') {
+						var element = $('[name="<?php echo $latitude; ?>"]');
+					}
+					else if (id == 'longitude') {
+						var element = $('[name="<?php echo $longitude; ?>"]');
+					}
+					else {
+						var element = $('#' + id);
+					}
+
+					if (element.length === 0) {
+						console.log('Could not find the element with the following id:', id);
+						return;
+					}
+
+					var eleType = element.prop('type');
+					element.val(value);
+
+					// Handle special REDCap field types
+					var eleName = element.attr('name');
+					if (element.hasClass('hiddenradio')) {
+						$('input[name="'+eleName+'___radio"][value="'+value+'"]').prop('checked', true);
+					} else if (eleType.indexOf("select") >= 0) {
+						if ($('#'+id+' option[value="'+value+'"]').length > 0) {
+							$('#'+id+' option[value="'+value+'"]').prop('selected', true);
+						} else {
+							var valUnderscore = value.replace(/\s+/g,"_");
+							if ($('#'+id+' option[value="'+valUnderscore+'"]').length > 0) {
 								$('#'+id+' option[value="'+valUnderscore+'"]').prop('selected', true);
-							} else if($('#'+id+' option[value="Other"]').length > 0) { // Still haven't found it. Let's check for an "Other" option
+							} else if ($('#'+id+' option[value="Other"]').length > 0) {
 								$('#'+id+' option[value="Other"]').prop('selected', true);
 							} else {
 								var optionsWithMatchingContent = $('#'+id+' option').filter(function(){
-									return $(this).html() === value
-								})
+									return $(this).html() === value;
+								});
 
-								if(optionsWithMatchingContent.length === 1){
+								if (optionsWithMatchingContent.length === 1) {
 									optionsWithMatchingContent.prop('selected', true);
 								} else {
 									alert("The value '" + value + "' is not a valid value for the '" + eleName + "' field.");
@@ -170,78 +244,65 @@ class AddressExternalModule extends AbstractExternalModule
 								}
 							}
 						}
-
-						element.change(); // Trigger the change listener, in case other modules/hooks want to know when this field changes.
-
-						if(element.hasClass('rc-autocomplete')){
-							var autocompleteField = element.closest('td').find('.ui-autocomplete-input')
-							autocompleteField.val(element.find('option:selected').text())
-							autocompleteField.change()
-						}
 					}
 
-					function fillInAddress() {
-						// Trigger a change event for the field.  This was added so other modules that check the
-						// address would trigger after the address is updated (like Census Geocoder).
-						$('#'+autocompleteId).change();
+					element.change();
 
-						/* Get the place details from the autocomplete object. */
-						var place = autocomplete.getPlace();
-						for (var component in componentForm) {
-							updateValue(autocompletePrefix+component, '');
+					if (element.hasClass('rc-autocomplete')) {
+						var autocompleteField = element.closest('td').find('.ui-autocomplete-input');
+						autocompleteField.val(element.find('option:selected').text());
+						autocompleteField.change();
+					}
+				}
+
+				/**
+				 * Populate (or clear) all address component fields from the selected Place.
+				 * Uses the NEW Places API property names: addressComponents[].longText / shortText.
+				 */
+				function fillInAddress(place, $field) {
+					// Clear all component fields first
+					for (var component in componentForm) {
+						updateValue(autocompletePrefix + component, '');
+					}
+
+					if (place && place.addressComponents && place.addressComponents.length > 0) {
+						// Write the full formatted address into the hidden original REDCap field
+						$field.val(place.formattedAddress || '');
+						$field.change();
+
+						// Latitude & Longitude
+						if (place.location) {
+							<?php echo ($latitude  ? "updateValue('latitude',  place.location.lat());\n" : ""); ?>
+							<?php echo ($longitude ? "updateValue('longitude', place.location.lng());\n" : ""); ?>
 						}
 
-						if (place !== undefined) {
-							<?php
-								echo ($latitude ? "updateValue('latitude',place.geometry.location.lat());\n" : "");
-								echo ($longitude ? "updateValue('longitude',place.geometry.location.lng());\n" : "");
-							?>
-
-							/* Get each component of the address from the place details and fill the corresponding field on the form. */
-							for (var i = 0; i < place.address_components.length; i++) {
-								var addressType = place.address_components[i].types[0];
-								if (componentForm[addressType] && (document.getElementById(autocompletePrefix+addressType))) {
-									var val = place.address_components[i][componentForm[addressType]];
-									if(addressType == 'administrative_area_level_2') {
-										val =  $.trim(val.replace('County',''));
-									}
-									updateValue(autocompletePrefix+addressType, val);
-									document.getElementById(autocompletePrefix+addressType).disabled = false;
+						// Map each address component into the configured REDCap fields
+						for (var i = 0; i < place.addressComponents.length; i++) {
+							var comp = place.addressComponents[i];
+							var addressType = comp.types[0];
+							if (componentForm[addressType] && document.getElementById(autocompletePrefix + addressType)) {
+								var formatKey  = componentForm[addressType];   // 'short_name' or 'long_name'
+								var val = comp[formatMap[formatKey]];          // maps to 'shortText' or 'longText'
+								if (addressType === 'administrative_area_level_2') {
+									val = $.trim(val.replace('County', ''));
 								}
+								updateValue(autocompletePrefix + addressType, val);
+								document.getElementById(autocompletePrefix + addressType).disabled = false;
 							}
-						} else {
-							// undefined place implies a blank address, lat and long must be blanked
-							<?php
-								echo ($latitude ? "updateValue('latitude', '');\n" : "");
-								echo ($longitude ? "updateValue('longitude', '');\n" : "");
-							?>
 						}
-						doBranching();
+					} else {
+						// No place selected — clear the original field and lat/lng
+						$field.val('');
+						$field.change();
+						<?php echo ($latitude  ? "updateValue('latitude',  '');\n" : ""); ?>
+						<?php echo ($longitude ? "updateValue('longitude', '');\n" : ""); ?>
 					}
 
-					/* Bias the autocomplete object to the user's geographical location, as supplied by the browser's 'navigator.geolocation' object. */
-					function geolocate() {
-						if (navigator.geolocation) {
-							navigator.geolocation.getCurrentPosition(function(position) {
-								lastGeolocateCallTimestamp = Date.now();
-								var geolocation = {
-									lat: position.coords.latitude,
-									lng: position.coords.longitude
-								};
-								var circle = new google.maps.Circle({
-									center: geolocation,
-									radius: position.coords.accuracy
-								});
-								autocomplete.setBounds(circle.getBounds());
-							});
-						}
-					}
-				</script>
-
+					if (typeof doBranching === 'function') { doBranching(); }
+				}
+			})();
+			</script>
 			<?php
-			if ($import) {
-				echo "<script type=\"text/javascript\" src=\"https://maps.googleapis.com/maps/api/js?key=".$key."&libraries=places\"></script>";
-			}
 		}
 	}
 }
