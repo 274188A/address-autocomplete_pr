@@ -131,50 +131,154 @@ class AddressExternalModule extends AbstractExternalModule
 				}
 
 				/**
+				 * Load the Places library, handling both modern (importLibrary) and
+				 * legacy (synchronous script tag) loading paths.
+				 */
+				function loadPlacesLibrary() {
+					return waitForGoogleMaps().then(function() {
+						// Modern async path: importLibrary exists when loaded with loading=async
+						if (typeof google.maps.importLibrary === 'function') {
+							return google.maps.importLibrary('places');
+						}
+						// Legacy path: the places library was already loaded via the script tag
+						if (google.maps.places) {
+							return Promise.resolve(google.maps.places);
+						}
+						return Promise.reject(new Error(
+							'Google Maps Places library is not available. ' +
+							'Ensure the script tag includes &libraries=places.'
+						));
+					});
+				}
+
+				/**
 				 * FIX #2: Use the modern PlaceAutocompleteElement instead of the
 				 * deprecated google.maps.places.Autocomplete class.
-				 * FIX #3: Handles the asynchronous load via waitForGoogleMaps().
+				 * Falls back to the legacy Autocomplete class when the page already
+				 * loaded the API synchronously (PlaceAutocompleteElement unavailable).
 				 */
 				function initAutocomplete($field) {
-					waitForGoogleMaps()
-						.then(function() {
-							return google.maps.importLibrary('places');
-						})
+					loadPlacesLibrary()
 						.then(function(placesLib) {
-							var PlaceAutocompleteElement = placesLib.PlaceAutocompleteElement;
-
-							// Create the new web-component-based autocomplete element
-							var placeAutocomplete = new PlaceAutocompleteElement({
-								types: ['address']
-							});
-							placeAutocomplete.id = autocompletePrefix + 'autocomplete';
-							placeAutocomplete.setAttribute('placeholder', 'Enter your address here');
-
-							// Insert the new element into the wrapper, before the hidden original field
-							$field.before(placeAutocomplete);
-
-							// Apply geolocation bias to improve relevance
-							applyGeolocationBias(placeAutocomplete);
-
-							// Listen for place selection (new API event)
-							placeAutocomplete.addEventListener('gmp-placeselect', async function(event) {
-								var place = event.place;
-								if (place) {
-									try {
-										await place.fetchFields({
-											fields: ['addressComponents', 'location', 'formattedAddress']
-										});
-									} catch (e) {
-										console.warn('Address Autocomplete: could not fetch place fields.', e);
-										place = null;
-									}
-								}
-								fillInAddress(place, $field);
-							});
+							var PACE = placesLib.PlaceAutocompleteElement;
+							if (typeof PACE === 'function') {
+								initWithNewApi(PACE, $field);
+							} else {
+								// PlaceAutocompleteElement not available — fall back to legacy class
+								initWithLegacyApi(placesLib, $field);
+							}
 						})
 						.catch(function(err) {
 							console.error('Address Autocomplete: failed to initialise.', err);
 						});
+				}
+
+				/**
+				 * Modern path: PlaceAutocompleteElement (New Places API).
+				 */
+				function initWithNewApi(PlaceAutocompleteElement, $field) {
+					var placeAutocomplete = new PlaceAutocompleteElement({
+						types: ['address']
+					});
+					placeAutocomplete.id = autocompletePrefix + 'autocomplete';
+					placeAutocomplete.setAttribute('placeholder', 'Enter your address here');
+
+					// Insert the new element into the wrapper, before the hidden original field
+					$field.before(placeAutocomplete);
+
+					// Apply geolocation bias to improve relevance
+					applyGeolocationBias(placeAutocomplete);
+
+					// Listen for place selection (new API event)
+					placeAutocomplete.addEventListener('gmp-placeselect', async function(event) {
+						var place = event.place;
+						if (place) {
+							try {
+								await place.fetchFields({
+									fields: ['addressComponents', 'location', 'formattedAddress']
+								});
+							} catch (e) {
+								console.warn('Address Autocomplete: could not fetch place fields.', e);
+								place = null;
+							}
+						}
+						fillInAddress(place, $field);
+					});
+				}
+
+				/**
+				 * Legacy fallback: google.maps.places.Autocomplete (deprecated but
+				 * still functional on pages that loaded the API the old way).
+				 */
+				function initWithLegacyApi(placesLib, $field) {
+					// Show the original input again — the legacy class attaches to it
+					$field.show();
+					$field.attr('id', autocompletePrefix + 'autocomplete');
+					$field.attr('placeholder', 'Enter your address here');
+
+					var inputEl = $field[0];
+					var autocompleteObj = new placesLib.Autocomplete(inputEl, {
+						types: ['address']
+					});
+
+					// Geolocation bias
+					if (navigator.geolocation) {
+						navigator.geolocation.getCurrentPosition(function(position) {
+							var circle = new google.maps.Circle({
+								center: { lat: position.coords.latitude, lng: position.coords.longitude },
+								radius: position.coords.accuracy
+							});
+							autocompleteObj.setBounds(circle.getBounds());
+						});
+					}
+
+					autocompleteObj.addListener('place_changed', function() {
+						var place = autocompleteObj.getPlace();
+						fillInAddressLegacy(place, $field);
+					});
+
+					// If the user clears the field, wipe all components
+					inputEl.addEventListener('change', function() {
+						if (inputEl.value === '') { fillInAddressLegacy(undefined, $field); }
+					});
+				}
+
+				/**
+				 * Fill address from the legacy Autocomplete Place result.
+				 * Uses address_components[].short_name / long_name (old property names).
+				 */
+				function fillInAddressLegacy(place, $field) {
+					for (var component in componentForm) {
+						updateValue(autocompletePrefix + component, '');
+					}
+
+					if (place && place.address_components) {
+						$field.change();
+
+						if (place.geometry && place.geometry.location) {
+							<?php echo ($latitude  ? "updateValue('latitude',  place.geometry.location.lat());\n" : ""); ?>
+							<?php echo ($longitude ? "updateValue('longitude', place.geometry.location.lng());\n" : ""); ?>
+						}
+
+						for (var i = 0; i < place.address_components.length; i++) {
+							var addressType = place.address_components[i].types[0];
+							if (componentForm[addressType] && document.getElementById(autocompletePrefix + addressType)) {
+								var val = place.address_components[i][componentForm[addressType]];
+								if (addressType === 'administrative_area_level_2') {
+									val = $.trim(val.replace('County', ''));
+								}
+								updateValue(autocompletePrefix + addressType, val);
+								document.getElementById(autocompletePrefix + addressType).disabled = false;
+							}
+						}
+					} else {
+						$field.val('');
+						$field.change();
+						<?php echo ($latitude  ? "updateValue('latitude',  '');\n" : ""); ?>
+						<?php echo ($longitude ? "updateValue('longitude', '');\n" : ""); ?>
+					}
+
+					if (typeof doBranching === 'function') { doBranching(); }
 				}
 
 				/**
