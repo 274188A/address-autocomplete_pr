@@ -187,25 +187,23 @@ SCRIPT;
 				/**
 				 * Initialise autocomplete on the given field.
 				 *
-				 * Strategy (maximises compatibility):
-				 *   1. If the legacy google.maps.places.Autocomplete class exists,
-				 *      use it — it works for every Google Cloud project that already
-				 *      has the "Places API" enabled (the vast majority of installs).
-				 *   2. Only fall through to the new PlaceAutocompleteElement when
-				 *      the legacy class is absent (brand-new post-Mar-2025 accounts
-				 *      that only have "Places API (New)" enabled).
+				 * Strategy (maximises forward-compatibility):
+				 *   1. Prefer the new PlaceAutocompleteElement (New Places API)
+				 *      when available — this is Google's recommended path.
+				 *   2. Fall back to the legacy google.maps.places.Autocomplete
+				 *      when the new class is not present.
 				 */
 				function initAutocomplete($field) {
 					loadPlacesLibrary()
 						.then(function(placesLib) {
-							if (typeof placesLib.Autocomplete === 'function') {
-								// Legacy class available — preferred path
-								console.log('[Address Autocomplete] Using Legacy Places API (google.maps.places.Autocomplete)');
-								initWithLegacyApi(placesLib, $field);
-							} else if (typeof placesLib.PlaceAutocompleteElement === 'function') {
-								// New-only account — use the modern element
+							if (typeof placesLib.PlaceAutocompleteElement === 'function') {
+								// New Places API available — preferred path
 								console.log('[Address Autocomplete] Using New Places API (PlaceAutocompleteElement)');
 								initWithNewApi(placesLib.PlaceAutocompleteElement, $field);
+							} else if (typeof placesLib.Autocomplete === 'function') {
+								// Legacy fallback
+								console.log('[Address Autocomplete] Using Legacy Places API (google.maps.places.Autocomplete)');
+								initWithLegacyApi(placesLib, $field);
 							} else {
 								showAutocompleteError($field,
 									'Neither Autocomplete nor PlaceAutocompleteElement found in the Places library.'
