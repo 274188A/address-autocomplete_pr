@@ -46,6 +46,8 @@ class AddressExternalModule extends AbstractExternalModule
 SCRIPT;
 			}
 
+		// Only proceed if API key and the trigger field are set
+		if ($key && $settings['trigger_field']) {
 			?>
 			<style>
 				#locationField { position: relative; }
@@ -413,7 +415,7 @@ SCRIPT;
 									alert("The value '" + value + "' is not a valid value for the '" + eleName + "' field.");
 									$('#'+id+' option[value=""]').prop('selected', true);
 								}
-							}
+							}, 200);
 						}
 					}
 
