@@ -29,11 +29,17 @@ class AddressExternalModule extends AbstractExternalModule
 
 		if ($key && $autocomplete) {
 
-			// FIX #3: Load Google Maps API asynchronously with loading=async
+			// Load Google Maps API using the official inline bootstrap.
+			// This defines google.maps.importLibrary immediately (synchronously)
+			// and defers the actual network load until importLibrary() is called.
+			// It is safe even if another module has already loaded the API.
 			if ($import) {
-				echo '<script async src="https://maps.googleapis.com/maps/api/js?key='
-					. htmlspecialchars($key, ENT_QUOTES, 'UTF-8')
-					. '&libraries=places&loading=async"></script>';
+				$escapedKey = htmlspecialchars($key, ENT_QUOTES, 'UTF-8');
+				echo <<<SCRIPT
+<script>
+(g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({key:"{$escapedKey}",v:"weekly"});
+</script>
+SCRIPT;
 			}
 
 			?>
@@ -113,27 +119,36 @@ class AddressExternalModule extends AbstractExternalModule
 				});
 
 				/**
-				 * Polls until google.maps is available, with a configurable timeout.
-				 * Rejects if the API doesn't appear within the timeout window.
+				 * Polls until we have a usable path to the Places library:
+				 *   - 'importLibrary' → google.maps.importLibrary exists
+				 *   - 'legacy'        → google.maps.places exists
+				 * Rejects after the timeout (default 15 s).
 				 */
-				function waitForGoogleMaps(timeoutMs) {
-					timeoutMs = timeoutMs || 15000; // default 15 s
+				function waitForPlacesReady(timeoutMs) {
+					timeoutMs = timeoutMs || 15000;
 					return new Promise(function(resolve, reject) {
-						if (typeof google !== 'undefined' && google.maps) {
-							resolve();
-							return;
+						function check() {
+							if (typeof google !== 'undefined' && google.maps) {
+								if (typeof google.maps.importLibrary === 'function') return 'importLibrary';
+								if (google.maps.places) return 'legacy';
+							}
+							return false;
 						}
+						var result = check();
+						if (result) { resolve(result); return; }
+
 						var elapsed = 0;
 						var interval = 150;
 						var poll = setInterval(function() {
 							elapsed += interval;
-							if (typeof google !== 'undefined' && google.maps) {
+							var r = check();
+							if (r) {
 								clearInterval(poll);
-								resolve();
+								resolve(r);
 							} else if (elapsed >= timeoutMs) {
 								clearInterval(poll);
 								reject(new Error(
-									'Google Maps JavaScript API did not load within ' +
+									'Google Maps Places library did not become available within ' +
 									(timeoutMs / 1000) + 's. A browser extension (ad blocker) ' +
 									'may be blocking requests to googleapis.com.'
 								));
@@ -143,33 +158,25 @@ class AddressExternalModule extends AbstractExternalModule
 				}
 
 				/**
-				 * Load the Places library, handling both modern (importLibrary) and
-				 * legacy (synchronous script tag) loading paths.
-				 * Includes a fallback: if importLibrary fails (e.g. sub-request
-				 * blocked), check whether google.maps.places was populated anyway.
+				 * Load the Places library.
+				 * Waits until either importLibrary or google.maps.places is available,
+				 * then returns a Promise that resolves to the places namespace.
 				 */
 				function loadPlacesLibrary() {
-					return waitForGoogleMaps().then(function() {
-						// Legacy path first: if places is already loaded, use it immediately
-						if (google.maps.places) {
-							return Promise.resolve(google.maps.places);
+					return waitForPlacesReady().then(function(mode) {
+						console.log('[Address Autocomplete] Google Maps detected via: ' + mode);
+						if (mode === 'importLibrary') {
+							return google.maps.importLibrary('places').catch(function(err) {
+								// importLibrary call failed — last-ditch check for legacy namespace
+								if (google.maps.places) {
+									console.warn('[Address Autocomplete] importLibrary("places") failed; falling back to google.maps.places.', err);
+									return google.maps.places;
+								}
+								throw err;
+							});
 						}
-						// Modern async path
-						if (typeof google.maps.importLibrary === 'function') {
-							return google.maps.importLibrary('places')
-								.catch(function(importErr) {
-									// importLibrary failed (blocked request?) — check one more time
-									if (google.maps.places) {
-										console.warn('[Address Autocomplete] importLibrary failed but google.maps.places exists; using fallback.', importErr);
-										return google.maps.places;
-									}
-									throw importErr;
-								});
-						}
-						return Promise.reject(new Error(
-							'Google Maps Places library is not available. ' +
-							'Ensure the script tag includes &libraries=places.'
-						));
+						// mode === 'legacy'
+						return google.maps.places;
 					});
 				}
 
