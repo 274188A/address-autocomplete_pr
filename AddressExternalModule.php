@@ -248,10 +248,25 @@ SCRIPT;
 					// Apply geolocation bias to improve relevance
 					applyGeolocationBias(placeAutocomplete);
 
-					// Listen for place selection (new API event)
-					placeAutocomplete.addEventListener('gmp-placeselect', async function(event) {
-						var place = event.place;
-						console.log('[Address Autocomplete] gmp-placeselect fired, place:', place);
+					console.log('[Address Autocomplete] PlaceAutocompleteElement inserted into DOM:', placeAutocomplete);
+					console.log('[Address Autocomplete] Element tag:', placeAutocomplete.tagName);
+
+					// Detect ALL events on the element for debugging
+					var knownEvents = [
+						'gmp-placeselect', 'gmp-select', 'gmp-place-select',
+						'placechange', 'place_changed', 'change', 'input', 'click'
+					];
+					knownEvents.forEach(function(evtName) {
+						placeAutocomplete.addEventListener(evtName, function(e) {
+							console.log('[Address Autocomplete] Event fired: "' + evtName + '"', e);
+						});
+					});
+
+					// Primary handler — try both known event names
+					async function handlePlaceSelect(event) {
+						console.log('[Address Autocomplete] Place selection handler called via: ' + event.type);
+						var place = event.place || event.detail?.place;
+						console.log('[Address Autocomplete] place object:', place);
 						if (place) {
 							try {
 								await place.fetchFields({
@@ -259,10 +274,8 @@ SCRIPT;
 								});
 								console.log('[Address Autocomplete] After fetchFields:');
 								console.log('  formattedAddress:', place.formattedAddress);
-								console.log('  displayName:', place.displayName);
 								console.log('  addressComponents:', place.addressComponents);
 								console.log('  location:', place.location);
-								// Log all enumerable properties to discover correct property names
 								console.log('  All place keys:', Object.keys(place));
 								if (place.addressComponents && place.addressComponents.length > 0) {
 									console.log('  First component keys:', Object.keys(place.addressComponents[0]));
@@ -274,7 +287,10 @@ SCRIPT;
 							}
 						}
 						fillInAddress(place, $field);
-					});
+					}
+
+					placeAutocomplete.addEventListener('gmp-placeselect', handlePlaceSelect);
+					placeAutocomplete.addEventListener('gmp-select', handlePlaceSelect);
 				}
 
 				/**
