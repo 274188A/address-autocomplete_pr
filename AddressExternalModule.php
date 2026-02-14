@@ -167,19 +167,21 @@ class AddressExternalModule extends AbstractExternalModule
 						.then(function(placesLib) {
 							if (typeof placesLib.Autocomplete === 'function') {
 								// Legacy class available — preferred path
+								console.log('[Address Autocomplete] Using Legacy Places API (google.maps.places.Autocomplete)');
 								initWithLegacyApi(placesLib, $field);
 							} else if (typeof placesLib.PlaceAutocompleteElement === 'function') {
 								// New-only account — use the modern element
+								console.log('[Address Autocomplete] Using New Places API (PlaceAutocompleteElement)');
 								initWithNewApi(placesLib.PlaceAutocompleteElement, $field);
 							} else {
 								console.error(
-									'Address Autocomplete: neither Autocomplete nor ' +
+									'[Address Autocomplete] Neither Autocomplete nor ' +
 									'PlaceAutocompleteElement found in the Places library.'
 								);
 							}
 						})
 						.catch(function(err) {
-							console.error('Address Autocomplete: failed to initialise.', err);
+							console.error('[Address Autocomplete] Failed to initialise.', err);
 						});
 				}
 
