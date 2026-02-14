@@ -113,36 +113,58 @@ class AddressExternalModule extends AbstractExternalModule
 				});
 
 				/**
-				 * Polls until the Google Maps core object is available (handles async loading).
+				 * Polls until google.maps is available, with a configurable timeout.
+				 * Rejects if the API doesn't appear within the timeout window.
 				 */
-				function waitForGoogleMaps() {
-					return new Promise(function(resolve) {
+				function waitForGoogleMaps(timeoutMs) {
+					timeoutMs = timeoutMs || 15000; // default 15 s
+					return new Promise(function(resolve, reject) {
 						if (typeof google !== 'undefined' && google.maps) {
 							resolve();
 							return;
 						}
+						var elapsed = 0;
+						var interval = 150;
 						var poll = setInterval(function() {
+							elapsed += interval;
 							if (typeof google !== 'undefined' && google.maps) {
 								clearInterval(poll);
 								resolve();
+							} else if (elapsed >= timeoutMs) {
+								clearInterval(poll);
+								reject(new Error(
+									'Google Maps JavaScript API did not load within ' +
+									(timeoutMs / 1000) + 's. A browser extension (ad blocker) ' +
+									'may be blocking requests to googleapis.com.'
+								));
 							}
-						}, 100);
+						}, interval);
 					});
 				}
 
 				/**
 				 * Load the Places library, handling both modern (importLibrary) and
 				 * legacy (synchronous script tag) loading paths.
+				 * Includes a fallback: if importLibrary fails (e.g. sub-request
+				 * blocked), check whether google.maps.places was populated anyway.
 				 */
 				function loadPlacesLibrary() {
 					return waitForGoogleMaps().then(function() {
-						// Modern async path: importLibrary exists when loaded with loading=async
-						if (typeof google.maps.importLibrary === 'function') {
-							return google.maps.importLibrary('places');
-						}
-						// Legacy path: the places library was already loaded via the script tag
+						// Legacy path first: if places is already loaded, use it immediately
 						if (google.maps.places) {
 							return Promise.resolve(google.maps.places);
+						}
+						// Modern async path
+						if (typeof google.maps.importLibrary === 'function') {
+							return google.maps.importLibrary('places')
+								.catch(function(importErr) {
+									// importLibrary failed (blocked request?) — check one more time
+									if (google.maps.places) {
+										console.warn('[Address Autocomplete] importLibrary failed but google.maps.places exists; using fallback.', importErr);
+										return google.maps.places;
+									}
+									throw importErr;
+								});
 						}
 						return Promise.reject(new Error(
 							'Google Maps Places library is not available. ' +
@@ -174,15 +196,31 @@ class AddressExternalModule extends AbstractExternalModule
 								console.log('[Address Autocomplete] Using New Places API (PlaceAutocompleteElement)');
 								initWithNewApi(placesLib.PlaceAutocompleteElement, $field);
 							} else {
-								console.error(
-									'[Address Autocomplete] Neither Autocomplete nor ' +
-									'PlaceAutocompleteElement found in the Places library.'
+								showAutocompleteError($field,
+									'Neither Autocomplete nor PlaceAutocompleteElement found in the Places library.'
 								);
 							}
 						})
 						.catch(function(err) {
 							console.error('[Address Autocomplete] Failed to initialise.', err);
+							showAutocompleteError($field, err.message || 'Could not load Google Maps.');
 						});
+				}
+
+				/**
+				 * Show a user-visible warning on the form when autocomplete cannot load.
+				 */
+				function showAutocompleteError($field, detail) {
+					$field.show(); // un-hide the original text input so the user can still type
+					$field.attr('placeholder', 'Address autocomplete unavailable — type manually');
+					$field.closest('#locationField').prepend(
+						'<div style="color:#c00;font-size:12px;margin-bottom:4px;">' +
+						'&#9888; Address autocomplete could not load. ' +
+						'If you have an ad blocker, please allow <b>googleapis.com</b> and reload. ' +
+						'You can still type the address manually.' +
+						'</div>'
+					);
+					console.warn('[Address Autocomplete] ' + detail);
 				}
 
 				/**
