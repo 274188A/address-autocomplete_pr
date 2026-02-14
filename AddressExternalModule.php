@@ -251,13 +251,25 @@ SCRIPT;
 					// Listen for place selection (new API event)
 					placeAutocomplete.addEventListener('gmp-placeselect', async function(event) {
 						var place = event.place;
+						console.log('[Address Autocomplete] gmp-placeselect fired, place:', place);
 						if (place) {
 							try {
 								await place.fetchFields({
 									fields: ['addressComponents', 'location', 'formattedAddress']
 								});
+								console.log('[Address Autocomplete] After fetchFields:');
+								console.log('  formattedAddress:', place.formattedAddress);
+								console.log('  displayName:', place.displayName);
+								console.log('  addressComponents:', place.addressComponents);
+								console.log('  location:', place.location);
+								// Log all enumerable properties to discover correct property names
+								console.log('  All place keys:', Object.keys(place));
+								if (place.addressComponents && place.addressComponents.length > 0) {
+									console.log('  First component keys:', Object.keys(place.addressComponents[0]));
+									console.log('  First component:', JSON.stringify(place.addressComponents[0]));
+								}
 							} catch (e) {
-								console.warn('Address Autocomplete: could not fetch place fields.', e);
+								console.warn('[Address Autocomplete] Could not fetch place fields.', e);
 								place = null;
 							}
 						}
