@@ -248,27 +248,27 @@ SCRIPT;
 					// Apply geolocation bias to improve relevance
 					applyGeolocationBias(placeAutocomplete);
 
-					console.log('[Address Autocomplete] PlaceAutocompleteElement inserted into DOM:', placeAutocomplete);
-					console.log('[Address Autocomplete] Element tag:', placeAutocomplete.tagName);
+					console.log('[Address Autocomplete] PlaceAutocompleteElement inserted, tag:', placeAutocomplete.tagName);
 
-					// Detect ALL events on the element for debugging
-					var knownEvents = [
-						'gmp-placeselect', 'gmp-select', 'gmp-place-select',
-						'placechange', 'place_changed', 'change', 'input', 'click'
-					];
-					knownEvents.forEach(function(evtName) {
-						placeAutocomplete.addEventListener(evtName, function(e) {
-							console.log('[Address Autocomplete] Event fired: "' + evtName + '"', e);
-						});
-					});
+					// The modern event is "gmp-select"; the event carries a placePrediction
+					// which must be converted to a Place via .toPlace(), then fetched.
+					placeAutocomplete.addEventListener('gmp-select', async function(event) {
+						console.log('[Address Autocomplete] gmp-select fired');
+						console.log('[Address Autocomplete] event keys:', Object.getOwnPropertyNames(event));
+						var place = null;
+						try {
+							// Try the documented accessor: event.placePrediction
+							var prediction = event.placePrediction;
+							console.log('[Address Autocomplete] placePrediction:', prediction);
+							if (prediction && typeof prediction.toPlace === 'function') {
+								place = prediction.toPlace();
+								console.log('[Address Autocomplete] place from toPlace():', place);
+							} else if (event.place) {
+								// Fallback: older API versions put place directly on event
+								place = event.place;
+							}
 
-					// Primary handler — try both known event names
-					async function handlePlaceSelect(event) {
-						console.log('[Address Autocomplete] Place selection handler called via: ' + event.type);
-						var place = event.place || event.detail?.place;
-						console.log('[Address Autocomplete] place object:', place);
-						if (place) {
-							try {
+							if (place) {
 								await place.fetchFields({
 									fields: ['addressComponents', 'location', 'formattedAddress']
 								});
@@ -276,21 +276,16 @@ SCRIPT;
 								console.log('  formattedAddress:', place.formattedAddress);
 								console.log('  addressComponents:', place.addressComponents);
 								console.log('  location:', place.location);
-								console.log('  All place keys:', Object.keys(place));
 								if (place.addressComponents && place.addressComponents.length > 0) {
-									console.log('  First component keys:', Object.keys(place.addressComponents[0]));
 									console.log('  First component:', JSON.stringify(place.addressComponents[0]));
 								}
-							} catch (e) {
-								console.warn('[Address Autocomplete] Could not fetch place fields.', e);
-								place = null;
 							}
+						} catch (e) {
+							console.warn('[Address Autocomplete] Could not process place.', e);
+							place = null;
 						}
 						fillInAddress(place, $field);
-					}
-
-					placeAutocomplete.addEventListener('gmp-placeselect', handlePlaceSelect);
-					placeAutocomplete.addEventListener('gmp-select', handlePlaceSelect);
+					});
 				}
 
 				/**
