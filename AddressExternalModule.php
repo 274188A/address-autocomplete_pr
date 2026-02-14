@@ -152,20 +152,30 @@ class AddressExternalModule extends AbstractExternalModule
 				}
 
 				/**
-				 * FIX #2: Use the modern PlaceAutocompleteElement instead of the
-				 * deprecated google.maps.places.Autocomplete class.
-				 * Falls back to the legacy Autocomplete class when the page already
-				 * loaded the API synchronously (PlaceAutocompleteElement unavailable).
+				 * Initialise autocomplete on the given field.
+				 *
+				 * Strategy (maximises compatibility):
+				 *   1. If the legacy google.maps.places.Autocomplete class exists,
+				 *      use it — it works for every Google Cloud project that already
+				 *      has the "Places API" enabled (the vast majority of installs).
+				 *   2. Only fall through to the new PlaceAutocompleteElement when
+				 *      the legacy class is absent (brand-new post-Mar-2025 accounts
+				 *      that only have "Places API (New)" enabled).
 				 */
 				function initAutocomplete($field) {
 					loadPlacesLibrary()
 						.then(function(placesLib) {
-							var PACE = placesLib.PlaceAutocompleteElement;
-							if (typeof PACE === 'function') {
-								initWithNewApi(PACE, $field);
-							} else {
-								// PlaceAutocompleteElement not available — fall back to legacy class
+							if (typeof placesLib.Autocomplete === 'function') {
+								// Legacy class available — preferred path
 								initWithLegacyApi(placesLib, $field);
+							} else if (typeof placesLib.PlaceAutocompleteElement === 'function') {
+								// New-only account — use the modern element
+								initWithNewApi(placesLib.PlaceAutocompleteElement, $field);
+							} else {
+								console.error(
+									'Address Autocomplete: neither Autocomplete nor ' +
+									'PlaceAutocompleteElement found in the Places library.'
+								);
 							}
 						})
 						.catch(function(err) {
