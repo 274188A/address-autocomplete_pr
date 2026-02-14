@@ -248,23 +248,15 @@ SCRIPT;
 					// Apply geolocation bias to improve relevance
 					applyGeolocationBias(placeAutocomplete);
 
-					console.log('[Address Autocomplete] PlaceAutocompleteElement inserted, tag:', placeAutocomplete.tagName);
-
 					// The modern event is "gmp-select"; the event carries a placePrediction
 					// which must be converted to a Place via .toPlace(), then fetched.
 					placeAutocomplete.addEventListener('gmp-select', async function(event) {
-						console.log('[Address Autocomplete] gmp-select fired');
-						console.log('[Address Autocomplete] event keys:', Object.getOwnPropertyNames(event));
 						var place = null;
 						try {
-							// Try the documented accessor: event.placePrediction
 							var prediction = event.placePrediction;
-							console.log('[Address Autocomplete] placePrediction:', prediction);
 							if (prediction && typeof prediction.toPlace === 'function') {
 								place = prediction.toPlace();
-								console.log('[Address Autocomplete] place from toPlace():', place);
 							} else if (event.place) {
-								// Fallback: older API versions put place directly on event
 								place = event.place;
 							}
 
@@ -272,13 +264,6 @@ SCRIPT;
 								await place.fetchFields({
 									fields: ['addressComponents', 'location', 'formattedAddress']
 								});
-								console.log('[Address Autocomplete] After fetchFields:');
-								console.log('  formattedAddress:', place.formattedAddress);
-								console.log('  addressComponents:', place.addressComponents);
-								console.log('  location:', place.location);
-								if (place.addressComponents && place.addressComponents.length > 0) {
-									console.log('  First component:', JSON.stringify(place.addressComponents[0]));
-								}
 							}
 						} catch (e) {
 							console.warn('[Address Autocomplete] Could not process place.', e);
